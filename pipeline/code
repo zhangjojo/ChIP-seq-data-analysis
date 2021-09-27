@@ -1,3 +1,11 @@
+## 用history命令可以查看安装的东西
+## 全码安装，下载到目录，可以用全路径来调用
+## 如果是环境变量， prefetch = prefetch
+
+
+
+
+
 ## 创建chipseq环境
 conda create -n chipseq python=2
 ## 激活环境
@@ -14,9 +22,12 @@ error while loading shared libraries: libtbb.so.2: cannot open shared object fil
 ##解决：
 https://github.com/bioconda/bioconda-recipes/issues/27173
 
+## 下载sra并转换为fasqc
+
+## 从网站找到数据的ID
 ## 文章提供的GEO编号：GSE34520
 ## SRA编号：SRP009883  链接：https://www.ncbi.nlm.nih.gov/sra?term=SRP009883
-## 在SRA链接中得到数据下载的编号：点击右上角的Send to - 勾选File - Format栏下拉选择Accession List - 点击Create File
+## 在SRA链接中得到数据下载的编号：点击右上角的Send to - 勾选File - Format栏下拉选择Accession List - 点击Create File,
 
 ## 创建分析的工作目录：chipseq
 mkdir -p ~/project/trainee/chipseq
@@ -25,18 +36,418 @@ cd ~/project/trainee/chipseq
 ## 在工作目录下创建各个工作子目录
 mkdir {sra,raw,clean,align,peaks,motif,qc}
 
+ prefetch = prefetch
 ## 进入sra目录，并将原始数据下载到这里
 cd sra
-## 创建srr.list,将在SRA数据库得到的原始数据sraID保存在srr.list中，作为批量下载的输入文件
-vim srr.list      /实际Vi srr.list
+## vim 或者 cat 命令创建srr.list文件,将在SRA数据库得到的原始数据sraID保存在srr.list中，作为批量下载的输入文件
+cat >srr.list
+SRR391032
+SRR391033
+SRR391034
+SRR391035
+SRR391036
+SRR391037
+SRR391038
+SRR391039
+SRR391040
+SRR391041
+SRR391042
+SRR391043
+SRR391044
+SRR391045
+SRR391046
+SRR391047
+SRR391048
+SRR391049
+SRR391050
 ## 下载原始数据,下载有点耗时间
+ls
+head srr.list
+wc srr.list
 cat srr.list | while read id ; do ( nohup $prefetch $id & ); done
-## 数据会下载到这个目录中：~/ncbi/public/sra/
+## 数据会下载到这个默认目录中：~/ncbi/public/sra/
 ls -lh ~/ncbi/public/sra/
+
+## 对下载好的数据进行解压，下载对应的配置文件
+head ~/ncbi/public/sra/
+
 ## 将下载好的数据移动到工作子目录sra下
 mv  ~/ncbi/public/sra/* ./
-
 
 ## 在SRA链接内下载RunInfo表格，制作config文件
 cat SraRunInfo.csv | tr ',' '\t' > SraRunInfo.txt
 cut -f 1,12 SraRunInfo.txt | sed 's/GSM.*: \|ChIPSeq\|MockIP//g' | tr ' ' '_'| perl -alne '{$h{$F[1]}++ if exists $h{$F[1]}; $h{$F[1]}=1 unless exists $h{$F[1]} ; print "$F[1]$h{$F[1]}\t$F[0]"}' | sed '1d;$d' > config
+
+将下载好SRA文件批量转换为Fastq文件
+
+conda activate chipseq
+## Fastq文件放在raw文件夹里
+cd ~/project/trainee/chipseq/raw
+raw_dir=~/project/trainee/chipseq/raw
+sra_dir=~/project/trainee/chipseq/sra
+cat $sra_dir/config | while read id;
+do echo $id
+arr=($id)
+srr=${arr[1]}
+sample=${arr[0]}
+## 单端数据提取
+nohup fastq-dump -A $sample -O $raw_dir --gzip --split-3 $sra_dir/$srr.sra &
+done
+
+对原始数据进行质控
+
+raw_dir=~/project/trainee/chipseq/raw
+## 进去qc文件夹
+cd ~/project/trainee/chipseq/qc
+## 创建原始质控文件夹并进入
+mkdir raw_qc && cd raw_qc
+## 进行质控; ../指上一层目录，相对目录
+ls $raw_dir/*gz | xargs fastqc -t 10 -o ./
+## mutilqc合并质控报告
+multiqc ./
+
+对数据进行过滤
+
+raw_dir=~/project/trainee/chipseq/raw
+## 进去qc文件夹
+cd ~/project/trainee/chipseq/qc
+## 创建原始质控文件夹并进入
+mkdir raw_qc && cd raw_qc
+## 进行质控; ../指上一层目录，相对目录
+ls $raw_dir/*gz | xargs fastqc -t 10 -o ./
+## mutilqc合并质控报告
+multiqc ./
+
+对过滤后的数据进行质控
+
+clean_dir=~/project/trainee/chipseq/clean
+## 进去qc文件夹
+cd ~/project/trainee/chipseq/qc
+## 创建原始质控文件夹并进入
+mkdir clean_qc && cd clean_qc
+## 进行质控; ../指上一层目录，相对目录
+ls $clean_dir/*gz | xargs fastqc -t 10 -o ./
+## mutilqc合并质控报告
+multiqc ./
+
+下载参考基因组及构建索引文件
+
+## 创建存放索引文件的文件夹
+mkdir -p ~/database/genome/Ensembl/Mus_mouse/mm10/bowtie2_index
+cd ~/database/genome/Ensembl/Mus_mouse/mm10/bowtie2_index
+wget -c https://genome-idx.s3.amazonaws.com/bt/mm10.zip
+unzip mm10.zip
+
+bowtie2单端测序比对及统计比对率
+
+## 进入比对工作目录
+cd ~/project/trainee/chipseq/align
+## 定义环境变量
+bowtie2_index=~/database/genome/Ensembl/Mus_mouse/mm10/bowtie2_index/mm10
+## 执行命令
+ls $clean_dir/*gz | while read id;
+do 
+file=$(basename $id)
+sample=${file%%.*}
+bowtie2 -p 5 -x $bowtie2_index -U $id | samtools sort -O bam -@ 5 -o - > ${sample}.bam
+done
+
+对比对生成的bam文件进行质控
+
+cd ~/project/trainee/chipseq/align
+## 对bam文件进行构建index后,才能进行统计
+ls *.bam | xargs -i samtools index {}
+ls *.bam | while read id ; do (nohup samtools flagstat $id > $(basename $id ".bam").stat &);done
+grep 'N/A' *.stat | grep '%'grep 'N/A' *.stat | grep '%'
+
+合并bam文件
+因为一个样品分成了多个lane进行测序，所以在进行peak callings的时候，需要将bam文件进行合并
+
+conda activate chipseq
+cd ~/project/trainee/chipseq
+## 创建mergeBam文件，将合并后的文件放入
+mkdir mergeBam 
+cd ~/project/trainee/chipseq/align
+ls *trimmed.bam | sed 's/_[0-9]_trimmed.bam//g' | sort -u | while read id; do samtools merge ../mergeBam/$id.merge.bam $id*trimmed.bam;done
+## 构建索引
+ls *.bam | xargs -i samtools index {}
+
+单端数据去除生物学重复
+
+## 关于去除PCR duplication的生树推文链接：
+## http://www.bio-info-trainee.com/2003.html
+## http://www.bio-info-trainee.com/2008.html
+## http://www.bio-info-trainee.com/2161.html
+cd ~/project/trainee/chipseq/mergeBam
+ls *.bam | while read id; do (nohup samtools markdup -r $id $(basename $id ".bam").rmdup.bam &);done
+ls *.rmdup.bam | xargs -i samtools index {}
+ls *.rmdup.bam | while read id ; do (nohup samtools flagstat $id > $(basename $id ".bam").stat &); done
+
+使用macs2进行找peaks
+
+「macs2参数：」
+
+-t:实验组输入文件
+-c:对照组输入文件
+-f:指定输入文件类型，包括：SAM,ELAND,BED,PORT,BAM等格式，不提供此选项会自动搜索
+-g:基因组大小，默认提供hs,mm,ce,dm选项，不在其中需要自己提供
+-n：输出文件的前缀名
+-B:保存更多的信息在bedGraph文件中，如：fragment pileup, control lambda, -log10pvalue等
+-q:q值，指最小的PDR阈值，默认0.05；q值是根据p值利用BH算法校正得到的
+-p:指p值，指定p值后MACS2不会再使用q值
+-m:和MFOLD有关，而MFOLD和MACS预构建模型有关，默认5：50,MACS会寻找100多个peak区域构建模型，一般不用改
+
+## 在退出chipseq小环境后，再次激活，并进入工作目录
+conda activate chipseq
+cd ~/project/trainee/chipseq/mergeBam
+## 分别对是否去除PCR重复的数据进行找peaks
+## 对没有去除PCR重复的数据，运行macs2命令
+ls *merge.bam | cut -d "." -f 1 | while read id ;do (nohup macs2 callpeak -c Control.merge.bam -t $id.merge.bam -f BAM -B -g mm -n $id --outdir ../peaks 2>$id.log &); done
+## 找个运行完的结果查看
+less H2Aub1_summits.bed
+## 对去除PCR重复的数据，批量运行macs2命令
+mkdir dup
+mv *rmdup* dup/
+cd dup/
+ls *.merge.rmdup.bam | cut -d "." -f 1 | while read id;
+do 
+    if [ ! -s ${id}_rmdup_summits.bed ];
+    then
+echo $id
+nohup macs2 callpeak -c Control.merge.rmdup.bam -t $id.merge.rmdup.bam -f BAM -B -g mm -n ${id}_rmdup --outdir ../peaks 2>$id.log&
+    fi
+done
+
+cd ~/project/trainee/chipseq/mergeBam
+wc -l *.bed
+## 未去除PCR重复的peaks
+     0 Control_summits.bed
+    1115 H2Aub1_summits.bed
+   40830 H3K36me3_summits.bed
+   26053 Ring1B_summits.bed
+   41864 RNAPII_8WG16_summits.bed
+   19984 RNAPII_S2P_summits.bed
+   38663 RNAPII_S5PRepeat_summits.bed
+   62765 RNAPII_S5P_summits.bed
+   72640 RNAPII_S7P_summits.bed
+  303914 total
+
+cd ~/project/trainee/chipseq/mergeBam/dup
+wc -l *.bed
+## 去除PCR重复的peaks
+    0 Control_rmdup_summits.bed
+    1115 H2Aub1_rmdup_summits.bed
+   40830 H3K36me3_rmdup_summits.bed
+   26053 Ring1B_rmdup_summits.bed
+   41841 RNAPII_8WG16_rmdup_summits.bed
+   19939 RNAPII_S2P_rmdup_summits.bed
+   38663 RNAPII_S5PRepeat_rmdup_summits.bed
+   62765 RNAPII_S5P_rmdup_summits.bed
+   72577 RNAPII_S7P_rmdup_summits.bed
+  303783 total
+
+
+使用deeptools对sam文件进行可视化
+
+bam,bw,bigwig等文件格式的转换 bw文件反应的是bam的测序深度，比bam文件导入基因组浏览器更快，更节省计算机资源 在基因组浏览器载入bed格式文件，查看peaks 需要对输出文件的格式有了解，wig、bigWig和bedgraph文件详解：生信技能树博客链接：http://www.bio-info-trainee.com/1815.html 这个网站提供了转换的脚本：http://barcwiki.wi.mit.edu/wiki/SOPs/coordinates「首先把bam文件转为bw文件」：
+
+## 进入比对结果文件夹
+cd ~/project/trainee/chipseq/mergeBam
+ls *.bam | while 
+## conda安装bamCoverage 
+conda activate chipseq
+## 将bam文件转换为bw文件；前提：已经对bam文件构建索引
+ls *.bam | while read id; do
+nohup bamCoverage --normalizeUsing CPM -b $id -o ${id%%.*}.bw &
+done
+
+cd ~/project/trainee/chipseq/mergeBam/dup
+ls *.rmdup.bam | xargs -i samtools
+ls *.bam | while read id; do
+nohup bamCoverage --normalizeUsing CPM -b $id -o ${id%%.*}.bw &
+done
+
+查看TSS(转录起始位点)附近的信号强度
+
+## 如何从ucsc下载TSS区域的bed文件，生树教程链接：
+## http://www.bio-info-trainee.com/2494.html
+## 下载得到文件ucsc.refseq.tss.txt，使用perl脚本处理为bed文件
+perl -alne '{next if /^#/;if($F[3] eq "+"){$start=$F[4]-2500;$end=$F[4]+2500}else{$start=$F[5]-2500;$end=$F[5]+2500}print join("\t",$F[2],$start,$end,$F[12],0,$F[3])}' ucsc.refseq.tss.txt |sort -u >ucsc.refseq.tss.bed
+
+## 创建存放输出结果的TSS文件夹
+mkdir -p ~/project/trainee/chipseq/tss
+cd ~/project/trainee/chipseq/tss
+
+## 首先对单一样本画图
+conda activate chipseq
+computeMatrix reference-point --referencePoint TSS -p 10 \
+-b 2000 -a 2000 \
+-R ~/references/chipseq/mm10ucsc.refseq.tss.bed \
+-S ~/project/trainee/chipseq/mergeBam/H3K36me3.bw  --skipZeros -o matrix1_test_TSS.gz \
+--outFileSortedRegions regions1_test_genes.bed
+
+plotHeatmap -m matrix1_test_TSS.gz -out test_Heatmap.png
+plotHeatmap -m matrix1_test_TSS.gz -out test_Heatmap.pdf --plotFileFormat pdf --dpi 720
+plotProfile -m matrix1_test_TSS.gz -out test_Profile.png
+plotProfile -m matrix1_test_TSS.gz -out test_Profile.pdf --plotFileFormat pdf --perGroup --dpi 720
+rm -r *test*
+
+## 批量处理,画TSS附近2k
+bed=~/references/chipseq/mm10/ucsc.refseq.tss.bed
+for id in ~/project/trainee/chipseq/mergeBam/*bw ;
+do 
+echo $id
+file=$(basename $id)
+sample=${file%%.*}
+echo $sample
+echo $file
+
+computeMatrix reference-point --referencePoint TSS -p 10 \
+-b 2000 -a 2000 \
+-R $bed \
+-S $id  --skipZeros -o matrix1_${sample}_TSS_2k.gz \
+--outFileSortedRegions regions1_${sample}_TSS_2k.bed
+
+plotHeatmap -m matrix1_${sample}_TSS_2k.gz -out ${sample}_Heatmap_2k.png
+plotHeatmap -m matrix1_${sample}_TSS_2k.gz -out ${sample}_Heatmap_2k.pdf --plotFileFormat pdf --dpi 720
+plotProfile -m matrix1_${sample}_TSS_2k.gz -out ${sample}_Profile_2k.png
+plotProfile -m matrix1_${sample}_TSS_2k.gz -out ${sample}_Profile_2k.pdf --plotFileFormat pdf --perGroup --dpi 720
+done
+
+cat > 2k.sh
+nohup bash 2k.sh 1>2k.log &
+
+## deeptools高级命令可以将热图画在一起
+
+
+## 10k画图
+bed=~/references/chipseq/mm10/ucsc.refseq.tss.bed
+for id in ~/project/trainee/chipseq/mergeBam/*bw ;
+do 
+echo $id
+file=$(basename $id)
+sample=${file%%.*}
+echo $sample
+echo $file
+
+computeMatrix reference-point --referencePoint TSS -p 10 \
+-b 10000 -a 10000 \
+-R $bed \
+-S $id  --skipZeros -o matrix1_${sample}_TSS_10k.gz \
+--outFileSortedRegions regions1_${sample}_TSS_10k.bed
+
+plotHeatmap -m matrix1_${sample}_TSS_10k.gz -out ${sample}_Heatmap_10k.png
+plotHeatmap -m matrix1_${sample}_TSS_10k.gz -out ${sample}_Heatmap_10k.pdf --plotFileFormat pdf --dpi 720
+plotProfile -m matrix1_${sample}_TSS_10k.gz -out ${sample}_Profile_10k.png
+plotProfile -m matrix1_${sample}_TSS_10k.gz -out ${sample}_Profile_10k.pdf --plotFileFormat pdf --perGroup --dpi 720
+done
+
+cat > 10k.sh
+nohup bash 10k.sh 1>10k.log &
+
+使用R语言对Peaks注释
+
+jimmy老师的代码仓库：https://github.com/jmzeng1314/NGS-pipeline/tree/master/CHIPseq
+
+setwd("~/project/trainee/chipseq/mergeBam/r_ana_peaks/")
+rm(list = ls())
+
+# peaks注释就是将peak在基因组的坐标与基因的坐标取个overlap
+
+## 加载包
+library(clusterProfiler)
+# BiocManager::install("ChIPseeker",update =F )
+library(ChIPseeker)
+# BiocManager::install("TxDb.Mmusculus.UCSC.mm10.knownGene",update =F)
+# BiocManager::install("TxDb.Hsapiens.UCSC.hg38.knownGene",update =F)
+# 手动构建TxDb注释文件:makeTxDbFromGFF('Homo_sapiens.GRCh38.98.gff3')
+library(TxDb.Mmusculus.UCSC.mm10.knownGene)
+# BiocManager::install("org.Mm.eg.db")
+library(org.Mm.eg.db)
+
+## 读入数据
+bedPeaksFile <- "../H3K36me3_summits.bed"
+peak <- readPeakFile(bedPeaksFile)
+## 指定参考基因组
+txdb <- TxDb.Mmusculus.UCSC.mm10.knownGene
+
+## 只保留常染色体和性染色体
+keepChr <- !grepl("_",seqlevels(peak))
+seqlevels(peak,pruning.mode="coarse") <- seqlevels(peak)[keepChr]
+
+## 重要：peaks注释
+peakAnno <- annotatePeak(peak,tssRegion = c(-3000,3000),
+                         TxDb = txdb,annoDb = "org.Mm.eg.db")
+peakAnno_df <- as.data.frame(peakAnno)
+write.csv(peakAnno_df,file = "./peakAnno_df.csv")
+cat(paste0('there are ',length(peak),' peaks for this data'))
+
+## 查看peaks的位置
+?covplot
+p1 <- covplot(peak,weightCol = "V5")
+ggsave(p1,filename = "./covplot.pdf")
+
+
+promoter <- getPromoters(TxDb = txdb,upstream = 3000,downstream = 3000)
+tagMatrix <- getTagMatrix(peak,windows = promoter)
+
+## 查看peaks在所有基因启动子附近的分布情况，热图
+## 存在问题，没画出来
+p2 <- tagHeatmap(tagMatrix,xlim =c(-3000,3000),color = "red")
+ggsave(p2,filename = "./tagHeatmap.pdf")
+
+## 查看这些peaks在所有基因的启动子附近的分布情况
+p3 <- plotAvgProf(tagMatrix,xlim = c(-3000,3000),
+            xlab = "Genomic Region (5'->3')",
+            ylab = "Read Count Frequency")
+
+ggsave(p3,filename = "./plotAvgProf.pdf")
+
+## 饼图，查看peaks的分布
+plotAnnoPie(peakAnno)
+
+## barplot
+plotAnnoBar(peakAnno)
+
+## 查看peaks的长度分布，只统计长度在1000bp以下的peaks
+peaksLength <- abs(peakAnno_df$end - peakAnno_df$start)
+peaksLength <- peaksLength[peaksLength<1000]
+hist(peaksLength,breaks = 50,col = "lightblue",xlim = c(0,1000),xlab = "peak length",main = "Histogram of peak length")
+
+# 可以将peaks先分类再注释，如果分类得到的基因太少，也可以直接拿所有的peaks相关基因去富集分析；
+# 如果分类可以根据：Promoter,5'UTR,3'UTR,Exon,Intron,Downstream,Intergenic
+# 注释的话kegg富集代码跑一下
+
+homer对peaks注释以及找motif
+
+conda activate chipseq
+## 下载homer的注释用到的数据库
+perl ~/biosoft/miniconda3/envs/chipseq/share/homer/configureHomer.pl -install mm10
+ls -lh ~/biosoft/miniconda3/envs/chipseq/share/homer/data/genomes/
+
+## 进入motif文件夹
+cd ~/project/trainee/chipseq/motif
+
+for id in ~/project/trainee/chipseq/peaks/*.bed;
+do 
+echo $id
+file=$(basename $id)
+sample=${file%%.*}
+echo $sample
+awk '{print $4"\t"$1"\t"$2"\t"$3"\t+"}' $id > homer_peaks.tmp
+findMotifsGenome.pl homer_peaks.tmp mm10 ${sample}_motifDir -len 8,10,12
+anntatePeaks.pl homer_peaks.tmp mm10 1>${sample}.peakAnn.xls 2>${sample}.annLog.txt
+done
+
+把上面的代码保存为脚本runMotif.sh，然后运行：nohup bash runMotif.sh 1>motif.log &
+
+不仅仅找了motif，还顺便把「peaks注释」了一下。得到的后缀为peakAnn.xls 的文件就可以看到和使用R包注释的结果是差不多的。
+
+还可以使用meme来找motif，需要通过bed格式的peaks的坐标来获取fasta序列。MEME，链接：http://meme-suite.org/
+
+
+其它高级分析
+
+比如可以 比较不同的peaks文件，代码见：https://github.com/jmzeng1314/NGS-pipeline/blob/master/CHIPseq/step6-ChIPpeakAnno-Venn.R
+
+当然了，本教程讲解的是单端测序数据的处理，如果是双端测序，里面的很多参数是需要修改的
