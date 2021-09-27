@@ -1,0 +1,42 @@
+## 创建chipseq环境
+conda create -n chipseq python=2
+## 激活环境
+conda activate chipseq
+## 安装需要的软件
+conda install -c bioconda bwa
+conda install -y -c bioconda sra-tools trim-galore
+conda install -y -c bioconda deeptools homer meme
+conda install -y -c bioconda macs2 bowtie bowtie2
+
+##遇到问题：
+error while loading shared libraries: libtbb.so.2: cannot open shared object file: No such file or directory
+(ERR): Description of arguments failed! Exiting now ...
+##解决：
+https://github.com/bioconda/bioconda-recipes/issues/27173
+
+## 文章提供的GEO编号：GSE34520
+## SRA编号：SRP009883  链接：https://www.ncbi.nlm.nih.gov/sra?term=SRP009883
+## 在SRA链接中得到数据下载的编号：点击右上角的Send to - 勾选File - Format栏下拉选择Accession List - 点击Create File
+
+## 创建分析的工作目录：chipseq
+mkdir -p ~/project/trainee/chipseq
+## 进入工作目录
+cd ~/project/trainee/chipseq
+## 在工作目录下创建各个工作子目录
+mkdir {sra,raw,clean,align,peaks,motif,qc}
+
+## 进入sra目录，并将原始数据下载到这里
+cd sra
+## 创建srr.list,将在SRA数据库得到的原始数据sraID保存在srr.list中，作为批量下载的输入文件
+vim srr.list      /实际Vi srr.list
+## 下载原始数据,下载有点耗时间
+cat srr.list | while read id ; do ( nohup $prefetch $id & ); done
+## 数据会下载到这个目录中：~/ncbi/public/sra/
+ls -lh ~/ncbi/public/sra/
+## 将下载好的数据移动到工作子目录sra下
+mv  ~/ncbi/public/sra/* ./
+
+
+## 在SRA链接内下载RunInfo表格，制作config文件
+cat SraRunInfo.csv | tr ',' '\t' > SraRunInfo.txt
+cut -f 1,12 SraRunInfo.txt | sed 's/GSM.*: \|ChIPSeq\|MockIP//g' | tr ' ' '_'| perl -alne '{$h{$F[1]}++ if exists $h{$F[1]}; $h{$F[1]}=1 unless exists $h{$F[1]} ; print "$F[1]$h{$F[1]}\t$F[0]"}' | sed '1d;$d' > config
