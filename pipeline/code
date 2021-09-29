@@ -2,6 +2,13 @@
 ## 全码安装，下载到目录，可以用全路径来调用
 ## 如果是环境变量， prefetch = prefetch
 
+查看安装了哪些软件 
+ls conda/envs/chipseq/bin
+
+ps ef |grep pref
+
+默认下载到～/ncbi/public/sra/
+
 
 
 
